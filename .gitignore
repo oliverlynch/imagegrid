@@ -1,0 +1,8 @@
+/target
+
+
+# Image Files
+*.webp
+*.png
+*.jpeg
+*.jpg
