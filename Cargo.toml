@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 clap = { version = "4.5.54", features = ["derive"] }
+glob = "0.3.3"
 image = "0.25.9"
 oklab = "1.1.2"
 ron = "0.12.0"

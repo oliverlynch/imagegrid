@@ -21,18 +21,18 @@ struct Args {
     image: String,
 
     /// Thumbnail directory
-    #[arg(short, long, default_value_t = String::from("./thumbnails/"))]
+    #[arg(short, long, default_value_t = String::from("./thumbnails/**/*.jpg"))]
     thumbs: String,
 
-    /// Size of the thumbnails
+    /// Size of the thumbnail grid in pixels
     #[arg(short = 'T', long, default_value_t = 32)]
     thumbsize: u32,
 
     /// Sampling resolution of image thumbnails
-    #[arg(short, long, default_value_t = 3)]
+    #[arg(short, long, default_value_t = 4)]
     sampleres: u32,
 
-    /// Resolution multiplier for final image
+    /// Resolution multiplier for final image (warning: multiplies image resolution!)
     #[arg(short, long, default_value_t = 1)]
     dpr: u32,
 
@@ -44,16 +44,10 @@ struct Args {
 #[derive(Debug, Clone, clap::ValueEnum)]
 enum DifferenceFunction {
     /// Fast
-    Rgb = 0,
+    Rgb,
     /// Slower, More Accurate
     Oklab,
 }
-
-// impl std::fmt::Display for DifferenceFunction {
-//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-//         write!(f, "{:?}", self)
-//     }
-// }
 
 #[derive(Serialize, Deserialize)]
 struct ThumbnailData {
@@ -77,33 +71,28 @@ async fn main() {
     COMPARISON_FN.get_or_init(|| args.algorithm);
 
     println!("Targeting {}!", args.image);
-
     let mut thumbs_db = ThumbnailDb::default();
     let mut thumbs_cache: HashMap<String, DynamicImage> = HashMap::new();
 
-    let thumb_data_path = Path::new(args.thumbs.as_str()).with_file_name("thumbdata");
+    let thumb_data_path = std::env::current_dir().unwrap().join("thumbdata");
 
     // Load thumbnail data from cache
     if let Ok(thumb_data) = fs::read(&thumb_data_path) {
-        // Read thumb data
         thumbs_db = ron::de::from_bytes(&thumb_data).expect("to deserialize thumbdata");
     }
 
     println!(
-        "Loaded data for {} thumbs from {}!",
+        "Loaded data for {} thumbs from {:?}!",
         &thumbs_db.thumbs.len(),
-        &thumb_data_path.to_str().expect("to convert path to string")
+        &thumb_data_path
     );
 
     let mut dirty_thumbs_db = 0u32;
 
-    let mut dir = fs::read_dir(&args.thumbs)
-        .expect("to read thumbs directory")
-        .into_iter();
+    let mut dir = glob::glob(&args.thumbs).expect("to glob directory");
     while let Some(Ok(thumb_entry)) = dir.next() {
         let entry_path = String::from(
             thumb_entry
-                .path()
                 .to_str()
                 .expect("to convert thumbnail path into a string"),
         );
@@ -114,25 +103,17 @@ async fn main() {
             .find(|&a| (a.path == entry_path) && (a.res == args.sampleres))
             .is_none()
         {
-            print!("\rProcessing new thumb {:?}", thumb_entry.path());
+            print!("\rProcessing new thumb {:?}", thumb_entry);
             std::io::stdout().flush().unwrap(); // Ensure stdout is flushed
 
-            import_thumb(
-                thumb_entry.path().to_str().unwrap(),
-                args.sampleres,
-                &mut thumbs_db,
-            )
-            .expect("to import thumbnail");
+            import_thumb(&entry_path, args.sampleres, &mut thumbs_db).expect("to import thumbnail");
             dirty_thumbs_db += 1;
         }
     }
 
     if dirty_thumbs_db > 0 {
-        fs::write(
-            thumb_data_path,
-            ron::ser::to_string_pretty(&thumbs_db, ron::ser::PrettyConfig::default()).unwrap(),
-        )
-        .expect("to write thumbdata");
+        fs::write(thumb_data_path, ron::ser::to_string(&thumbs_db).unwrap())
+            .expect("to write thumbdata");
         println!(
             "Processed {} new thumbs!                                                  ",
             dirty_thumbs_db
@@ -160,13 +141,28 @@ async fn main() {
         .with_guessed_format()
         .expect("Cursor io never fails");
 
-    let original_path = args.image.clone();
+    // Figure out where we want to write the output image
+    let original_path = Path::new(&args.image);
 
-    let output_path = Path::new(&original_path);
-    let output_path = output_path
-        .parent()
-        .unwrap()
-        .join(String::from(output_path.file_stem().unwrap().to_str().unwrap()) + ".output.webp");
+    // let output_dir = original_path.parent().unwrap();
+    let output_dir = std::env::current_dir().unwrap();
+    let output_name = original_path.file_prefix().unwrap().to_str().unwrap();
+    let output_ext = original_path.extension().unwrap();
+
+    let mut output_path = output_dir
+        .join(output_name)
+        .with_extension("output")
+        .with_added_extension(output_ext);
+
+    // If the filename already exists try adding a number until it works
+    let mut dup_num = 1u32;
+    while output_path.exists() {
+        output_path = output_dir
+            .join(output_name)
+            .with_extension(format!("output-{}", dup_num))
+            .with_added_extension(output_ext);
+        dup_num += 1;
+    }
 
     let mut image = reader.decode().expect("to decode image");
 
@@ -250,7 +246,7 @@ async fn main() {
     print!("Saving Image...\r");
 
     target_image
-        .save_with_format(&output_path, image::ImageFormat::WebP)
+        .save(&output_path)
         .expect("to save output image");
 
     println!("Saved image to {}", &output_path.display());
