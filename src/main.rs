@@ -20,6 +20,9 @@ struct Args {
     /// The input image
     image: String,
 
+    /// The output image
+    output: Option<String>,
+
     /// Thumbnail directory
     #[arg(short, long, default_value_t = String::from("./thumbnails/**/*.jpg"))]
     thumbs: String,
@@ -150,24 +153,33 @@ async fn main() {
     // Figure out where we want to write the output image
     let original_path = Path::new(&args.image);
 
-    let output_dir = std::env::current_dir().unwrap();
-    let output_name = original_path.file_prefix().unwrap().to_str().unwrap();
-    let output_ext = original_path.extension().unwrap();
+    let mut working_path: std::path::PathBuf;
+    let output_path = match args.output.as_ref() {
+        Some(p) => Path::new(p),
 
-    let mut output_path = output_dir
-        .join(output_name)
-        .with_extension("output")
-        .with_added_extension(output_ext);
+        None => {
+            let output_dir = std::env::current_dir().unwrap();
+            let output_name = original_path.file_prefix().unwrap().to_str().unwrap();
+            let output_ext = original_path.extension().unwrap();
 
-    // If the filename already exists try adding a number until it works
-    let mut dup_num = 1u32;
-    while output_path.exists() {
-        output_path = output_dir
-            .join(output_name)
-            .with_extension(format!("output-{}", dup_num))
-            .with_added_extension(output_ext);
-        dup_num += 1;
-    }
+            working_path = output_dir
+                .join(output_name)
+                .with_extension("output")
+                .with_added_extension(output_ext);
+
+            // If the filename already exists try adding a number until it works
+            let mut dup_num = 1u32;
+            while working_path.exists() {
+                working_path = output_dir
+                    .join(output_name)
+                    .with_extension(format!("output-{}", dup_num))
+                    .with_added_extension(output_ext);
+                dup_num += 1;
+            }
+
+            working_path.as_path()
+        }
+    };
 
     let mut image = reader.decode().expect("to decode image");
 
