@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs,
     io::{Cursor, Write},
     iter::zip,
@@ -49,7 +49,7 @@ enum DifferenceFunction {
     Oklab,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Eq, PartialEq, Hash)]
 struct ThumbnailData {
     path: String,
     res: u32,
@@ -58,7 +58,7 @@ struct ThumbnailData {
 
 #[derive(Default, Serialize, Deserialize)]
 struct ThumbnailDb {
-    thumbs: Vec<ThumbnailData>,
+    thumbs: HashSet<ThumbnailData>,
 }
 
 static INPUT_IMAGE: OnceLock<RgbImage> = OnceLock::new();
@@ -125,6 +125,12 @@ async fn main() {
         exit(1i32);
     }
 
+    // Filter thumbs to current sample resolution
+    thumbs_db.thumbs = thumbs_db
+        .thumbs
+        .extract_if(|ThumbnailData { res, .. }| args.sampleres.eq(res))
+        .collect();
+
     // Lock thumbs_db
     THUMBS_DB.get_or_init(|| thumbs_db);
 
@@ -144,7 +150,6 @@ async fn main() {
     // Figure out where we want to write the output image
     let original_path = Path::new(&args.image);
 
-    // let output_dir = original_path.parent().unwrap();
     let output_dir = std::env::current_dir().unwrap();
     let output_name = original_path.file_prefix().unwrap().to_str().unwrap();
     let output_ext = original_path.extension().unwrap();
@@ -212,7 +217,7 @@ async fn main() {
                     y_chunk,
                     process_chunk(chunk, args.sampleres, THUMBS_DB.get().unwrap())
                         .await
-                        .unwrap(),
+                        .expect("To process image chunk"),
                 );
             });
         }
@@ -261,7 +266,7 @@ where
 
     let path = String::from(p.into());
 
-    thumbs_db.thumbs.push(ThumbnailData {
+    thumbs_db.thumbs.insert(ThumbnailData {
         path: path.clone(),
         res,
         colors: rgb_thumb_to_pixels(&thumb_image),
@@ -357,7 +362,7 @@ async fn process_chunk<'a>(
     let pixels = rgb_thumb_to_pixels(&mut thumb);
     let mut best_match: Option<&ThumbnailData> = None;
 
-    match COMPARISON_FN.get().unwrap() {
+    match COMPARISON_FN.get().expect("to get comparison function") {
         DifferenceFunction::Oklab => {
             let mut best_score = f32::MAX;
 
