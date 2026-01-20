@@ -1,0 +1,54 @@
+name: Rust
+
+on:
+  push:
+    tags:
+      - v*.*.*
+    
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  linux_windows:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout the repository
+      uses: actions/checkout@v6
+
+    - name: Cache
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+    - name: Install Linux and Windows Cross Compilers
+      run: sudo apt-get install --yes --no-install-recommends musl-tools gcc-mingw-w64-x86-64-win32
+
+    - name: Install rustup targets
+      run: rustup target add x86_64-unknown-linux-musl x86_64-pc-windows-gnu
+
+    - name: Build the executable
+      run: cargo build --release --target x86_64-unknown-linux-musl --target x86_64-pc-windows-gnu
+
+    - name: Tar x86_64 binary
+      run: tar -czvf imagegrid-gnu-linux-x86_64.tar.gz -C target/x86_64-unknown-linux-musl/release imagegrid
+
+    - name: Zip windows binary
+      run: zip -j imagegrid-windows.zip target/x86_64-pc-windows-gnu/release/imagegrid.exe
+
+    - name: Generate SHA256 checksums
+      run: |
+        shasum -a 256 imagegrid-gnu-linux-x86_64.tar.gz > imagegrid-gnu-linux-x86_64.tar.gz.sha256
+        shasum -a 256 imagegrid-windows.zip > imagegrid-windows.zip.sha256
+
+    - name: Release
+      uses: softprops/action-gh-release@v2
+      with:
+        files: |
+          imagegrid-gnu-linux-x86_64.tar.gz
+          imagegrid-windows.zip
+          imagegrid-gnu-linux-x86_64.tar.gz.sha256
+          imagegrid-windows.zip.sha256
